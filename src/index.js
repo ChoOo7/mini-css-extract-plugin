@@ -406,7 +406,24 @@ class MiniCssExtractPlugin {
     return obj;
   }
 
+  
   renderContentAsset(compilation, chunk, modules, requestShortener) {
+    const [chunkGroup] = chunk.groupsIterable;
+    let rv;
+    const getModuleIndex2 = chunkGroup.getModuleIndex2;
+    try {
+      rv = this.originalRenderContentAsset(compilation, chunk, modules, requestShortener);
+    } catch (e) {
+      chunkGroup.getModuleIndex2 = null;
+      rv = this.originalRenderContentAsset(compilation, chunk, modules, requestShortener);
+    } finally {
+      chunkGroup.getModuleIndex2 = getModuleIndex2;
+    }
+
+    return rv;
+  }
+
+  originalRenderContentAsset(compilation, chunk, modules, requestShortener) {
     let usedModules;
 
     const [chunkGroup] = chunk.groupsIterable;
