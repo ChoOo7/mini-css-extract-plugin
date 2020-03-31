@@ -90,12 +90,7 @@ class CssModule extends webpack.Module {
 }
 
 class CssModuleFactory {
-  create(
-    {
-      dependencies: [dependency],
-    },
-    callback
-  ) {
+  create({ dependencies: [dependency] }, callback) {
     callback(null, new CssModule(dependency));
   }
 }
@@ -408,7 +403,6 @@ class MiniCssExtractPlugin {
     return obj;
   }
 
-  
   // This very awful workaround prevents a weird `<undefined>.pop()` in the plugin
   // that's caused by who-knows-what (NOT related to dynamic imports).
   // See this github issue for details:
@@ -416,16 +410,23 @@ class MiniCssExtractPlugin {
   renderContentAsset(compilation, chunk, modules, requestShortener) {
     const [chunkGroup] = chunk.groupsIterable;
     let rv;
-    const getModuleIndex2 = chunkGroup.getModuleIndex2;
+    const {getModuleIndex2} = chunkGroup;
     try {
-      rv = this.originalRenderContentAsset(compilation, chunk, modules, requestShortener);
-    }
-    catch(e) {
+      rv = this.originalRenderContentAsset(
+        compilation,
+        chunk,
+        modules,
+        requestShortener
+      );
+    } catch (e) {
       chunkGroup.getModuleIndex2 = null;
-      rv = this.originalRenderContentAsset(compilation, chunk, modules, requestShortener);
-    }
-    finally
-    {
+      rv = this.originalRenderContentAsset(
+        compilation,
+        chunk,
+        modules,
+        requestShortener
+      );
+    } finally {
       chunkGroup.getModuleIndex2 = getModuleIndex2;
     }
     return rv;
@@ -439,6 +440,9 @@ class MiniCssExtractPlugin {
     if (typeof chunkGroup.getModuleIndex2 === 'function') {
       // Store dependencies for modules
       const moduleDependencies = new Map(modules.map((m) => [m, new Set()]));
+      const moduleDependenciesReasons = new Map(
+        modules.map((m) => [m, new Map()])
+      );
 
       // Get ordered list of modules per chunk group
       // This loop also gathers dependencies from the ordered lists
@@ -458,9 +462,14 @@ class MiniCssExtractPlugin {
 
         for (let i = 0; i < sortedModules.length; i++) {
           const set = moduleDependencies.get(sortedModules[i]);
+          const reasons = moduleDependenciesReasons.get(sortedModules[i]);
 
           for (let j = i + 1; j < sortedModules.length; j++) {
-            set.add(sortedModules[j]);
+            const module = sortedModules[j];
+            set.add(module);
+            const reason = reasons.get(module) || new Set();
+            reason.add(cg);
+            reasons.set(module, reason);
           }
         }
 
@@ -512,16 +521,35 @@ class MiniCssExtractPlugin {
           // and emit a warning
           const fallbackModule = bestMatch.pop();
           if (!this.options.ignoreOrder) {
+            const reasons = moduleDependenciesReasons.get(fallbackModule);
             compilation.warnings.push(
               new Error(
-                `chunk ${chunk.name || chunk.id} [${pluginName}]\n` +
-                  'Conflicting order between:\n' +
-                  ` * ${fallbackModule.readableIdentifier(
-                    requestShortener
-                  )}\n` +
-                  `${bestMatchDeps
-                    .map((m) => ` * ${m.readableIdentifier(requestShortener)}`)
-                    .join('\n')}`
+                [
+                  `chunk ${chunk.name || chunk.id} [${pluginName}]`,
+                  'Conflicting order. Following module has been added:',
+                  ` * ${fallbackModule.readableIdentifier(requestShortener)}`,
+                  'despite it was not able to fulfill desired ordering with these modules:',
+                  ...bestMatchDeps.map((m) => {
+                    const goodReasonsMap = moduleDependenciesReasons.get(m);
+                    const goodReasons =
+                      goodReasonsMap && goodReasonsMap.get(fallbackModule);
+                    const failedChunkGroups = Array.from(
+                      reasons.get(m),
+                      (cg) => cg.name
+                    ).join(', ');
+                    const goodChunkGroups =
+                      goodReasons &&
+                      Array.from(goodReasons, (cg) => cg.name).join(', ');
+                    return [
+                      ` * ${m.readableIdentifier(requestShortener)}`,
+                      `   - couldn't fulfill desired order of chunk group(s) ${failedChunkGroups}`,
+                      goodChunkGroups &&
+                        `   - while fulfilling desired order of chunk group(s) ${goodChunkGroups}`,
+                    ]
+                      .filter(Boolean)
+                      .join('\n');
+                  }),
+                ].join('\n')
               )
             );
           }
